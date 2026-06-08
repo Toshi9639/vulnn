@@ -10,18 +10,24 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache python3 make g++ git curl
+RUN apk add --no-cache python3 make g++ git
 
-# Copy package files
+# Copy all source files first
 COPY package*.json ./
 COPY tsconfig.json ./
 COPY src/ ./src/
 
-# Install ALL dependencies (including dev for build)
+# Install ALL dependencies (including dev for TypeScript build)
 RUN npm ci
+
+# Verify source files are present
+RUN ls -la src/ && ls -la src/lib/
 
 # Build the TypeScript code
 RUN npm run build
+
+# Verify build output
+RUN ls -la dist/
 
 # Stage 2: Runtime image with security tools
 FROM node:20-alpine
