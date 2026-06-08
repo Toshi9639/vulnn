@@ -8,14 +8,20 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install build dependencies
 RUN apk add --no-cache python3 make g++
 
 COPY package*.json ./
 COPY tsconfig.json ./
-COPY prisma/ ./prisma/
 
+# Install all dependencies (need dev for Prisma generation)
 RUN npm ci
+
+# Copy Prisma schema from db folder and generate client
+COPY ../db/schema.prisma ./prisma/schema.prisma
 RUN npx prisma generate
+
+# Build the TypeScript code
 RUN npm run build
 
 # Stage 2: Production
