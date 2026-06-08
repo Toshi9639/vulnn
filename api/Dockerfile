@@ -13,12 +13,12 @@ RUN apk add --no-cache python3 make g++
 
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY prisma/ ./prisma/
 
 # Install all dependencies (need dev for Prisma generation)
 RUN npm ci
 
-# Copy Prisma schema from db folder and generate client
-COPY ../db/schema.prisma ./prisma/schema.prisma
+# Generate Prisma client
 RUN npx prisma generate
 
 # Build the TypeScript code
