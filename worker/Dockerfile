@@ -15,9 +15,13 @@ RUN apk add --no-cache python3 make g++ git curl
 # Copy package files
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY src/ ./src/
 
-# Install production dependencies
-RUN npm ci --omit=dev --ignore-scripts
+# Install ALL dependencies (including dev for build)
+RUN npm ci
+
+# Build the TypeScript code
+RUN npm run build
 
 # Stage 2: Runtime image with security tools
 FROM node:20-alpine
