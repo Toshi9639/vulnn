@@ -1,0 +1,187 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────
+# VulnCenter — Production Docker Compose for Coolify
+# Multi-Tenant Vulnerability Scanning Platform for MSPs
+# ──────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &restart-policy
+  restart: unless-stopped
+
+services:
+  # ─── Database ───────────────────────────────────────────
+  postgres:
+    <<: [*restart-policy]
+    image: postgres:16-alpine
+    container_name: vulncenter-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vulncenter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-vulncenter}
+    volumes:
+      - vulncenter-pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vulncenter} -d ${POSTGRES_DB:-vulncenter}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - vulncenter-internal
+    logging: *default-logging
+
+  # ─── Cache & Queue ──────────────────────────────────────
+  redis:
+    <<: [*restart-policy]
+    image: redis:7-alpine
+    container_name: vulncenter-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - vulncenter-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vulncenter-internal
+    logging: *default-logging
+
+  # ─── API Gateway (Fastify) ────────────────────────────
+  api:
+    <<: [*restart-policy]
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: vulncenter-api
+    environment:
+      NODE_ENV: production
+      PORT: 8000
+      HOST: 0.0.0.0
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRY: ${JWT_EXPIRY:-24h}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://app.vulncenter.example.com}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vulncenter-internal
+    logging: *default-logging
+
+  # ─── Scan Worker Pool ─────────────────────────────────
+  worker:
+    <<: [*restart-policy]
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: vulncenter-worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD}@redis:6379}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NUCLEI_TEMPLATES_PATH: /opt/nuclei-templates
+      MAX_CONCURRENT_SCANS: ${MAX_CONCURRENT_SCANS:-5}
+      SCAN_TIMEOUT_MS: ${SCAN_TIMEOUT_MS:-600000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vulncenter-internal
+    # Workers need outbound access to targets but not inbound
+    cap_add:
+      - NET_RAW      # Required for nmap SYN scans
+      - NET_ADMIN    # Required for certain scan types
+    cap_drop:
+      - ALL          # Drop everything, add back only what's needed
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - vulncenter-nuclei-templates:/opt/nuclei-templates
+    logging: *default-logging
+    # Workers can be scaled horizontally:
+    # deploy:
+    #   replicas: 3
+
+  # ─── Frontend (Next.js) ───────────────────────────────
+  web:
+    <<: [*restart-policy]
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: vulncenter-web
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.vulncenter.example.com}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://app.vulncenter.example.com}
+      API_INTERNAL_URL: http://api:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+    networks:
+      - vulncenter-internal
+    logging: *default-logging
+
+  # ─── Prisma Migration Runner (One-shot) ───────────────
+  db-migrate:
+    build:
+      context: ./db
+      dockerfile: Dockerfile
+    container_name: vulncenter-db-migrate
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vulncenter-internal
+    # This service runs migrations and exits
+    profiles:
+      - setup
+
+# ─── Named Volumes ──────────────────────────────────────
+volumes:
+  vulncenter-pgdata:
+    name: vulncenter-pgdata
+    driver: local
+  vulncenter-redis:
+    name: vulncenter-redis
+    driver: local
+  vulncenter-nuclei-templates:
+    name: vulncenter-nuclei-templates
+    driver: local
+
+# ─── Networks ────────────────────────────────────────────
+networks:
+  vulncenter-internal:
+    name: vulncenter-internal
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1

@@ -1,0 +1,28 @@
+{
+  "name": "vulncenter-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "build": "tsc",
+    "start": "node dist/worker.js",
+    "healthcheck": "node dist/healthcheck.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.14.0",
+    "bullmq": "^5.7.8",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "pino": "^9.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "eslint": "^9.3.0",
+    "prettier": "^3.2.5",
+    "prisma": "^5.14.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,52 @@
+# ──────────────────────────────────────────────────────────────
+# VulnCenter — .gitignore
+# ──────────────────────────────────────────────────────────────
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+.next/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.production
+.env.development
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-data/
+
+# Prisma
+prisma/migrations/
+
+# Temp scan data
+/tmp/vulncenter-scans/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -1,0 +1,333 @@
+// ──────────────────────────────────────────────────────────────
+// VulnCenter — Prisma Schema
+// Multi-Tenant Vulnerability Scanning Platform for MSPs
+// ──────────────────────────────────────────────────────────────
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "multiSchema"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, citext, pg_stat_statements]
+}
+
+// ════════════════════════════════════════════════════════════════
+// AUTHENTICATION & TENANCY
+// ════════════════════════════════════════════════════════════════
+
+/// Root MSP Organization (the top-level tenant)
+model MspTenant {
+  id        String   @id @default(cuid()) @db.VarChar(30)
+  name      String   @db.VarChar(255)
+  slug      String   @unique @db.VarChar(100)
+  domain    String?  @unique @db.VarChar(255)
+  logo      String?
+  settings  Json?    @default("{}")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clients  Client[]
+  users    User[]
+  audits   AuditLog[]
+}
+
+/// Client organizations under an MSP (each is a tenant)
+model Client {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  mspTenantId String   @db.VarChar(30)
+  name        String   @db.VarChar(255)
+  slug        String   @db.VarChar(100)
+  contactName String?  @db.VarChar(255)
+  contactEmail String? @db.VarChar(255)
+  contactPhone String? @db.VarChar(50)
+  settings    Json?    @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mspTenant  MspTenant   @relation(fields: [mspTenantId], references: [id], onDelete: Cascade)
+  users      User[]
+  targets    Target[]
+  scans      Scan[]
+  reports    Report[]
+
+  @@unique([mspTenantId, slug])
+  @@index([mspTenantId])
+}
+
+/// User accounts — linked to either MspTenant (SuperAdmin) or Client
+enum UserRole {
+  SUPER_ADMIN    // MSP root — full access to all clients
+  CLIENT_ADMIN   // Client org admin — can manage scans, targets, users
+  CLIENT_VIEWER  // Client org viewer — can only read reports/scans
+}
+
+model User {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  email       String   @unique @db.VarChar(255)
+  passwordHash String  @db.VarChar(255)
+  name        String   @db.VarChar(255)
+  role        UserRole @default(CLIENT_VIEWER)
+  mspTenantId String   @db.VarChar(30)
+  clientId    String?  @db.VarChar(30) // Null for SUPER_ADMIN level users
+  isActive    Boolean  @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mspTenant MspTenant @relation(fields: [mspTenantId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  audits    AuditLog[]
+
+  @@unique([mspTenantId, email])
+  @@index([mspTenantId])
+  @@index([clientId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// TARGET MANAGEMENT
+// ════════════════════════════════════════════════════════════════
+
+enum TargetType {
+  IP
+  CIDR
+  FQDN
+  URL
+}
+
+enum TargetStatus {
+  UNVERIFIED
+  VERIFIED
+  DISABLED
+  EXPIRED
+}
+
+model Target {
+  id          String       @id @default(cuid()) @db.VarChar(30)
+  clientId    String       @db.VarChar(30)
+  type        TargetType
+  value       String       @db.VarChar(512) // IP, CIDR, FQDN, or URL
+  label       String?      @db.VarChar(255) // Human-friendly name
+  ports       String?      @db.VarChar(255) // "80,443,8080-8090"
+  tags        String[]     // ["production", "critical", "web"]
+  status      TargetStatus @default(UNVERIFIED)
+  verifiedAt  DateTime?
+  verifiedBy  String?      @db.VarChar(30)
+  disclaimerAcceptedAt DateTime?
+  notes       String?      @db.Text
+  createdBy   String       @db.VarChar(30)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  scans  Scan[]
+
+  @@unique([clientId, value])
+  @@index([clientId])
+  @@index([status])
+  @@index([type])
+}
+
+// ════════════════════════════════════════════════════════════════
+// SCAN MANAGEMENT
+// ════════════════════════════════════════════════════════════════
+
+enum ScanType {
+  NMAP_QUICK
+  NMAP_FULL
+  NUCLEI_CVE
+  NUCLEI_WEB
+  NIKTO_WEB
+  TESTSSL
+  CUSTOM
+}
+
+enum ScanStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  PARTIAL
+}
+
+model Scan {
+  id                  String     @id @default(cuid()) @db.VarChar(30)
+  clientId            String     @db.VarChar(30)
+  targetId            String     @db.VarChar(30)
+  scanType            ScanType
+  status              ScanStatus @default(PENDING)
+  config              Json?      @default("{}") // Scan-specific config overrides
+  progress            Int        @default(0)    // 0-100 percent
+  startedAt           DateTime?
+  completedAt         DateTime?
+  totalFindings       Int        @default(0)
+  criticalFindings    Int        @default(0)
+  highFindings        Int        @default(0)
+  mediumFindings      Int        @default(0)
+  lowFindings         Int        @default(0)
+  infoFindings        Int        @default(0)
+  errorMessage        String?    @db.Text
+  rawOutput           String?    @db.Text // Full raw scan output (compressed)
+  triggeredBy         String     @db.VarChar(30) // User ID
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  client    Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  target    Target      @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  findings  Finding[]
+  reports   Report[]
+
+  @@index([clientId])
+  @@index([targetId])
+  @@index([status])
+  @@index([clientId, status])
+  @@index([createdAt])
+}
+
+// ════════════════════════════════════════════════════════════════
+// VULNERABILITY FINDINGS
+// ════════════════════════════════════════════════════════════════
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+  UNKNOWN
+}
+
+enum FindingStatus {
+  OPEN
+  IN_PROGRESS
+  MITIGATED
+  ACCEPTED_RISK
+  FALSE_POSITIVE
+  REOPENED
+}
+
+model Finding {
+  id            String        @id @default(cuid()) @db.VarChar(30)
+  scanId        String        @db.VarChar(30)
+  clientId      String        @db.VarChar(30)
+  source        String        @db.VarChar(50) // "nmap", "nuclei", "nikto", "testssl"
+  findingType   String        @db.VarChar(255) // CVE ID, "OPEN_PORT", "XSS", etc.
+  severity      Severity
+  title         String        @db.VarChar(512)
+  description   String?       @db.Text
+  port          Int?          // Associated port
+  protocol      String?       @db.VarChar(10) // "tcp", "udp"
+  host          String?       @db.VarChar(255) // Affected host/IP
+  path          String?       @db.VarChar(1024) // URL path for web findings
+  cveId         String?       @db.VarChar(20)
+  cvssScore     Float?
+  cvssVector    String?       @db.VarChar(100)
+  evidence      String?       @db.Text // Proof/evidence output
+  remediation   String?       @db.Text // Remediation steps
+  references    Json?         @default("[]") // External reference URLs
+  metadata      Json?         @default("{}") // Tool-specific metadata
+  status        FindingStatus @default(OPEN)
+  assignedTo    String?       @db.VarChar(30) // User ID
+  resolvedAt    DateTime?
+  resolvedBy    String?       @db.VarChar(30)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  scan    Scan    @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  client  Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+  @@index([clientId])
+  @@index([severity])
+  @@index([findingType])
+  @@index([cveId])
+  @@index([status])
+  @@index([clientId, severity])
+  @@index([scanId, severity])
+}
+
+// ════════════════════════════════════════════════════════════════
+// REPORTING
+// ════════════════════════════════════════════════════════════════
+
+enum ReportStatus {
+  GENERATING
+  READY
+  FAILED
+}
+
+model Report {
+  id          String       @id @default(cuid()) @db.VarChar(30)
+  clientId    String       @db.VarChar(30)
+  scanId      String?      @db.VarChar(30) // Nullable for aggregate reports
+  title       String       @db.VarChar(255)
+  reportType  String       @db.VarChar(50) // "SCAN_SUMMARY", "CLIENT_WEEKLY", "CLIENT_MONTHLY"
+  status      ReportStatus @default(GENERATING)
+  config      Json?        @default("{}") // Filtering/grouping config
+  summary     Json?        @default("{}") // Aggregated statistics
+  pdfPath     String?      @db.VarChar(512) // Path to generated PDF
+  generatedBy String       @db.VarChar(30)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  client Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  scan   Scan?   @relation(fields: [scanId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([scanId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ════════════════════════════════════════════════════════════════
+// NOTIFICATIONS
+// ════════════════════════════════════════════════════════════════
+
+model Notification {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  clientId    String?  @db.VarChar(30) // Null for MSP-level notifications
+  userId      String   @db.VarChar(30)
+  title       String   @db.VarChar(255)
+  message     String   @db.Text
+  type        String   @db.VarChar(50) // "scan_complete", "critical_finding", "report_ready"
+  isRead      Boolean  @default(false)
+  link        String?  @db.VarChar(512) // URL to the relevant resource
+  createdAt   DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([clientId])
+  @@index([createdAt])
+}
+
+// ════════════════════════════════════════════════════════════════
+// AUDIT LOGGING
+// ════════════════════════════════════════════════════════════════
+
+model AuditLog {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  mspTenantId String   @db.VarChar(30)
+  userId      String   @db.VarChar(30)
+  action      String   @db.VarChar(100) // "scan.create", "target.add", "user.login"
+  resource    String   @db.VarChar(100) // "scan", "target", "user"
+  resourceId  String?  @db.VarChar(30)
+  details     Json?    @default("{}")
+  ipAddress   String?  @db.VarChar(45) // IPv6 ready
+  userAgent   String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+
+  mspTenant MspTenant @relation(fields: [mspTenantId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([mspTenantId, createdAt])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+
+  @@schema("public")
+}
