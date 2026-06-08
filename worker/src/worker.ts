@@ -135,7 +135,7 @@ async function main() {
     {
       connection,
       concurrency: WORKER_CONFIG.maxConcurrentScans,
-      lockDuration: WORKER_CONFIG.scanTimeoutMs,
+      lockDuration: Math.min(WORKER_CONFIG.scanTimeoutMs * 1.5, 3600000), // 1.5x scan timeout, max 1 hour
       stalledInterval: 30000,
       maxStalledCount: 3,
       autorun: true,
@@ -178,10 +178,22 @@ async function main() {
 
   // Handle process signals
   const shutdown = async (signal: string) => {
-    logger.info(`Received ${signal}, shutting down worker...`);
+    logger.info(`Received ${signal}, shutting down worker gracefully...`);
+    
+    // Stop accepting new jobs
     await worker.close();
+    
+    // Give in-flight jobs time to complete (max 30 seconds)
+    const gracefulTimeout = setTimeout(() => {
+      logger.warn("Graceful shutdown timeout reached, forcing exit");
+      process.exit(1);
+    }, 30000);
+    
     await prisma.$disconnect();
     connection.disconnect();
+    
+    clearTimeout(gracefulTimeout);
+    logger.info("Worker shutdown complete");
     process.exit(0);
   };
 
@@ -278,16 +290,28 @@ async function persistResults(data: ScanJobData, result: ScanJobResult): Promise
     );
 
     if (criticalOrHigh.length > 0) {
-      await prisma.notification.create({
-        data: {
+      // Get users who should be notified (client admins and super admins)
+      const usersToNotify = await prisma.user.findMany({
+        where: {
           clientId: data.clientId,
-          userId: data.scanId, // Will be replaced with actual user lookup
-          title: `Critical findings detected in scan`,
-          message: `Scan found ${criticalOrHigh.length} critical/high severity vulnerabilities.`,
-          type: "critical_finding",
-          link: `/scans/${data.scanId}`,
+          role: { in: ["CLIENT_ADMIN", "SUPER_ADMIN"] },
+          isActive: true,
         },
+        select: { id: true },
       });
+
+      if (usersToNotify.length > 0) {
+        await prisma.notification.createMany({
+          data: usersToNotify.map((user) => ({
+            clientId: data.clientId,
+            userId: user.id,
+            title: `Critical findings detected in scan`,
+            message: `Scan found ${criticalOrHigh.length} critical/high severity vulnerabilities.`,
+            type: "critical_finding",
+            link: `/scans/${data.scanId}`,
+          })),
+        });
+      }
     }
   } catch (error) {
     logger.error({ error, scanId: data.scanId }, "Failed to persist scan results");

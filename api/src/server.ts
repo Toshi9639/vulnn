@@ -12,6 +12,8 @@ import { connectPrisma, prisma } from "./lib/database.js";
 import { redis } from "./lib/queue.js";
 import { authPlugin } from "./lib/auth.js";
 import { scanRoutes } from "./routes/scans.js";
+import { targetRoutes } from "./routes/targets.js";
+import { clientRoutes } from "./routes/clients.js";
 
 async function buildServer() {
   const fastify = Fastify({
@@ -93,6 +95,8 @@ async function buildServer() {
   // ─── Routes ───────────────────────────────────────────
 
   await fastify.register(scanRoutes);
+  await fastify.register(targetRoutes);
+  await fastify.register(clientRoutes);
 
   // ─── Error Handler ────────────────────────────────────
 
@@ -136,17 +140,31 @@ async function buildServer() {
   });
 
   // ─── Graceful Shutdown ────────────────────────────────
-
-  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
-  for (const signal of signals) {
-    process.on(signal, async () => {
-      logger.info(`Received ${signal}, shutting down gracefully...`);
-      await fastify.close();
-      await prisma.$disconnect();
-      redis.disconnect();
-      process.exit(0);
-    });
-  }
+  // Handle graceful shutdown
+    const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+    for (const signal of signals) {
+      process.on(signal, async () => {
+        logger.info(`Received ${signal}, shutting down gracefully...`);
+      
+        // Give in-flight requests time to complete (max 30 seconds)
+        const gracefulTimeout = setTimeout(() => {
+          logger.warn("Graceful shutdown timeout reached, forcing exit");
+          process.exit(1);
+        }, 30000);
+      
+        await fastify.close();
+        await prisma.$disconnect();
+        
+        // Close Redis connections
+        redis.disconnect();
+        // Wait a bit for Redis to close cleanly
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      
+        clearTimeout(gracefulTimeout);
+        logger.info("API shutdown complete");
+        process.exit(0);
+      });
+    }
 
   return fastify;
 }

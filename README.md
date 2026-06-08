@@ -1,144 +1,293 @@
-# ──────────────────────────────────────────────────────────────
-# VulnCenter
-# Multi-Tenant Vulnerability Scanning Platform for MSPs
-# ──────────────────────────────────────────────────────────────
+# VulnCenter - Enterprise Vulnerability Scanning Platform for MSPs
 
-> **Self-hosted, multi-tenant vulnerability scanning.** Manage Nmap, Nuclei,
-> Nikto, and TestSSL scans for all your clients from a single dashboard.
-> Deployed via Coolify with Docker Compose.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-latest-blue.svg)](https://hub.docker.com/r/vulncenter)
+[![Coolify Compatible](https://img.shields.io/badge/Coolify-✔-green.svg)](https://coolify.io)
 
-## Architecture Overview
+## Overview
 
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  User    │───▶│  API     │───▶│  Redis   │───▶│  Worker  │───▶│  Target  │
-│ (Auth'd) │    │ Fastify  │    │  Queue   │    │  Pool    │    │  Network │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
-```
+VulnCenter is a **multi-tenant vulnerability scanning platform** designed for Managed Service Providers (MSPs). Manage security scans for all your clients from a single, self-hosted dashboard with complete data isolation.
 
-## Tech Stack
+### Key Features
 
-| Layer      | Technology                                      |
-|------------|-------------------------------------------------|
-| Frontend   | Next.js 14 (App Router), Tailwind CSS, Shadcn/ui |
-| API        | Node.js + Fastify + Prisma ORM                   |
-| Queue      | Redis + BullMQ                                   |
-| Workers    | Nmap, Nuclei, Nikto, TestSSL                    |
-| Database   | PostgreSQL 16                                    |
-| Deploy     | Coolify + Docker Compose                         |
+- 🛡️ **Multi-Tenant Architecture** - Complete data isolation between clients with role-based access control
+- 🔍 **Integrated Scanning Engines** - Nmap, Nuclei, Nikto, and TestSSL
+- 📊 **Professional Reporting** - Generate PDF reports with severity breakdowns
+- 🚀 **Coolify Ready** - One-click deployment with Coolify PaaS
+- 🔐 **Enterprise Security** - JWT authentication, RBAC, audit logging
 
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose v2
-- Coolify instance (or any Docker host)
 
-### 1. Clone & Configure
+- Docker 20.10+ and Docker Compose 2.0+
+- OR Coolify 4.0+ installation
+- 4GB RAM minimum (8GB recommended)
+- 2 CPU cores minimum (4 cores recommended)
+
+### Deploy with Coolify (Recommended)
+
+1. **Prepare your Coolify instance**
+   - Ensure Coolify is installed and running
+   - Navigate to your project dashboard
+
+2. **Add the repository**
+   - Click "Add Resource" → "Git Repository"
+   - Connect your GitHub/GitLab account
+   - Select the vulnn repository
+
+3. **Configure services**
+   - Coolify will auto-detect `docker-compose.yml`
+   - Set the following environment variables:
+     ```bash
+     DATABASE_URL=postgresql://vulncenter:YOUR_PASSWORD@postgres:5432/vulncenter
+     REDIS_PASSWORD=YOUR_REDIS_PASSWORD
+     JWT_SECRET=openssl rand -base64 32
+     NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+     NEXT_PUBLIC_APP_URL=https://app.yourdomain.com
+     ```
+
+4. **Run database migrations**
+   ```bash
+   docker compose --profile setup run --rm db-migrate
+   ```
+
+5. **Deploy**
+   - Click "Deploy" in Coolify
+   - Wait for all services to become healthy
+   - Access the dashboard at `https://app.yourdomain.com`
+
+### Manual Deployment with Docker Compose
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/vulncenter/vulnn.git
+   cd vulnn
+   ```
+
+2. **Configure environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your values
+   nano .env
+   ```
+
+3. **Generate secrets**
+   ```bash
+   # JWT Secret (minimum 32 characters)
+   openssl rand -base64 32
+   
+   # Database password
+   openssl rand -base64 24
+   ```
+
+4. **Run migrations**
+   ```bash
+   docker compose --profile setup run --rm db-migrate
+   ```
+
+5. **Start services**
+   ```bash
+   docker compose up -d
+   ```
+
+6. **Verify deployment**
+   ```bash
+   docker compose ps
+   # All services should show "healthy" status
+   
+   # Check logs
+   docker compose logs -f api
+   docker compose logs -f worker
+   ```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | - | ✅ |
+| `REDIS_URL` | Redis connection string | - | ✅ |
+| `JWT_SECRET` | JWT signing secret (min 32 chars) | - | ✅ |
+| `JWT_EXPIRY` | JWT token expiration | `24h` | ❌ |
+| `CORS_ORIGIN` | Allowed CORS origins (comma-separated) | `*` | ❌ |
+| `ALLOW_PRIVATE_IPS` | Allow scanning private IPs | `false` | ❌ |
+| `MAX_CONCURRENT_SCANS` | Worker concurrency | `5` | ❌ |
+| `SCAN_TIMEOUT_MS` | Maximum scan duration | `1800000` | ❌ |
+| `NUCLEI_TEMPLATES_PATH` | Nuclei templates directory | `/opt/nuclei-templates` | ❌ |
+
+### Security Configuration
+
+**Important**: Before deploying to production:
+
+1. **Change default passwords** in `.env`
+2. **Set `CORS_ORIGIN`** to your actual domain (not `*`)
+3. **Generate strong JWT_SECRET** using `openssl rand -base64 32`
+4. **Enable TLS/HTTPS** - Coolify handles this automatically
+5. **Review `ALLOW_PRIVATE_IPS`** setting for internal scanning
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│              Reverse Proxy (Coolify)            │
+│         (TLS Termination, Load Balancing)       │
+└──────────────┬────────────────┬────────────────┘
+               │                │
+        ┌──────▼──────┐  ┌──────▼──────┐
+        │  Web (3000) │  │  API (8000) │
+        │   Next.js   │  │   Fastify   │
+        └──────┬──────┘  └──────┬──────┘
+               │                │
+        ┌──────▼────────────────▼──────┐
+        │       Redis (BullMQ)         │
+        │    Scan Queue Management     │
+        └──────┬────────────────┬──────┘
+               │                │
+        ┌──────▼──────┐  ┌──────▼──────┐
+        │   Worker    │  │  PostgreSQL │
+        │  Scan Pool  │  │   Database  │
+        └─────────────┘  └─────────────┘
+```
+
+## Usage
+
+### Creating Your First Scan
+
+1. **Login** to the dashboard with admin credentials
+2. **Add a client** organization under "Clients"
+3. **Add a target** (IP, CIDR, FQDN, or URL)
+4. **Verify ownership** by accepting the disclaimer
+5. **Create a scan** and select scan type:
+   - **NMAP_QUICK** - Fast port scan (top 100 ports)
+   - **NMAP_FULL** - Comprehensive port scan (all 65535 ports)
+   - **NUCLEI_CVE** - CVE vulnerability detection
+   - **NUCLEI_WEB** - Web application scanning
+   - **NIKTO_WEB** - Web server security checks
+   - **TESTSSL** - SSL/TLS configuration analysis
+
+### API Usage
 
 ```bash
-git clone <your-repo-url> vulncenter
-cd vulncenter
-cp .env.example .env
-# Edit .env with your secrets
+# Authenticate
+curl -X POST https://api.yourdomain.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"yourpassword"}'
+
+# List scans
+curl https://api.yourdomain.com/api/v1/scans \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Create a scan
+curl -X POST https://api.yourdomain.com/api/v1/scans \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "targetId": "target_id_here",
+    "scanType": "NMAP_QUICK"
+  }'
 ```
 
-### 2. Environment Variables
+## Troubleshooting
 
-Set these in Coolify or your `.env`:
+### Common Issues
 
-| Variable            | Description                | Example                                |
-|---------------------|----------------------------|----------------------------------------|
-| `DATABASE_URL`      | PostgreSQL connection       | `postgresql://user:pass@postgres:5432/db` |
-| `REDIS_PASSWORD`    | Redis auth password         | `your-strong-password`                 |
-| `JWT_SECRET`        | JWT signing key (min 32ch) | `your-256-bit-secret-key-here-change-me` |
-| `CORS_ORIGIN`       | Frontend URL for CORS       | `https://app.vulncenter.example.com`   |
+**Services won't start**
+```bash
+# Check database connectivity
+docker compose exec postgres pg_isready
 
-### 3. Deploy with Coolify
+# View service logs
+docker compose logs api
+docker compose logs worker
+```
 
-1. Create a new **Docker Compose** resource in Coolify
-2. Point it to your repository
-3. Set all environment variables in Coolify's UI
-4. Deploy!
+**Migrations fail**
+```bash
+# Reset and re-run migrations
+docker compose --profile setup run --rm db-migrate
+```
 
-### 4. Manual Deploy
+**Worker scans timeout**
+- Increase `SCAN_TIMEOUT_MS` in `.env`
+- Check network connectivity to targets
+- Verify scanning tools are installed: `docker compose exec worker which nmap nuclei nikto`
+
+**CORS errors**
+- Ensure `CORS_ORIGIN` matches your frontend domain exactly
+- Include protocol: `https://app.example.com` (not `app.example.com`)
+
+### Health Checks
 
 ```bash
-# Run database migrations first
-docker compose --profile setup run db-migrate
+# API health
+curl https://api.yourdomain.com/health
 
-# Start all services
-docker compose up -d
+# Worker health
+curl http://localhost:8080 # from inside worker container
 
-# Check health
-curl http://localhost:8000/health
+# Database readiness
+docker compose exec postgres pg_isready
 ```
 
-## Project Structure
+## Development
 
-```
-vulncenter/
-├── docker-compose.yml          # Multi-service Docker Compose
-├── .env.example                # Environment variable template
-├── api/                        # Fastify API Gateway
-│   ├── Dockerfile
-│   ├── src/
-│   │   ├── server.ts           # Entry point
-│   │   ├── routes/             # API route handlers
-│   │   │   └── scans.ts        # Scan management routes
-│   │   └── lib/                # Shared libraries
-│   │       ├── auth.ts         # JWT + RBAC
-│   │       ├── database.ts     # Prisma client
-│   │       ├── queue.ts        # BullMQ queue
-│   │       ├── types.ts        # Validation + types
-│   │       └── env.ts          # Config validation
-│   └── package.json
-├── worker/                     # Scan Worker
-│   ├── Dockerfile              # Pre-installs nmap, nuclei, nikto, testssl
-│   ├── src/
-│   │   ├── worker.ts           # BullMQ worker entry point
-│   │   └── lib/
-│   │       ├── engine.ts       # Scan execution engine
-│   │       ├── executor.ts     # Secure command execution
-│   │       └── queue.ts        # Queue types
-│   └── package.json
-├── web/                        # Next.js Frontend
-│   ├── Dockerfile
-│   ├── src/
-│   │   ├── app/                # App Router pages
-│   │   │   ├── page.tsx        # Landing page
-│   │   │   └── layout.tsx      # Root layout
-│   │   └── lib/
-│   │       └── utils.ts        # Frontend utilities
-│   └── package.json
-├── db/                         # Database
-│   ├── Dockerfile              # Migration runner
-│   ├── schema.prisma           # Multi-tenant schema
-│   └── init.sql                # Initial SQL setup
-└── docs/
-    └── ARCHITECTURE.md         # System architecture diagram
+### Local Setup
+
+```bash
+# Install dependencies
+cd api && npm install
+cd ../worker && npm install
+cd ../web && npm install
+
+# Start database and Redis
+docker compose up -d postgres redis
+
+# Run migrations
+cd api && npx prisma migrate dev
+
+# Start development servers
+cd api && npm run dev
+cd ../worker && npm run dev
+cd ../web && npm run dev
 ```
 
-## API Endpoints
+### Adding New Scan Types
 
-| Method | Path                    | Description                | Auth Required |
-|--------|-------------------------|----------------------------|:-------------:|
-| GET    | `/health`               | Health check               | No            |
-| POST   | `/api/v1/scans`         | Trigger a new scan         | Yes           |
-| GET    | `/api/v1/scans`         | List scans (tenant-scoped) | Yes           |
-| GET    | `/api/v1/scans/:id`     | Scan details + findings    | Yes           |
-| POST   | `/api/v1/scans/:id/cancel` | Cancel a running scan   | Yes           |
+1. Add scan type to `ScanType` enum in `db/schema.prisma`
+2. Implement scanner in `worker/src/lib/engine.ts`
+3. Add route in `api/src/routes/scans.ts`
+4. Update frontend scan selector
 
-## Security
+## Security Considerations
 
-- **Multi-Tenant Isolation:** All DB queries scoped by `tenantId` + `clientId`
-- **RBAC:** SUPER_ADMIN, CLIENT_ADMIN, CLIENT_VIEWER roles
-- **Input Sanitization:** Target validation blocks private/reserved IPs
-- **Command Injection Protection:** `execFile` (not shell), arg sanitization
-- **Non-Root Containers:** All services run as non-root users
-- **Capability Dropping:** Worker drops all Linux capabilities except NET_RAW/NET_ADMIN
-- **Rate Limiting:** 100 req/min per IP on API gateway
-- **Audit Logging:** All actions logged per tenant
+⚠️ **Important**: This tool is for **authorized security testing only**.
+
+- Only scan systems you own or have explicit permission to test
+- The platform includes ownership verification mechanisms
+- All scan activity is logged for audit purposes
+- Private IP scanning is disabled by default (can be enabled via `ALLOW_PRIVATE_IPS=true`)
 
 ## License
 
-MIT — Built for the security community.
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Support
+
+- Documentation: https://docs.vulncenter.io
+- Issues: https://github.com/vulncenter/vulnn/issues
+- Discord: https://discord.gg/vulncenter
+
+## Acknowledgments
+
+Built with:
+- [Fastify](https://fastify.io/) - API framework
+- [Next.js](https://nextjs.org/) - Frontend framework
+- [Prisma](https://prisma.io/) - Database ORM
+- [BullMQ](https://bullmq.io/) - Job queues
+- [Nmap](https://nmap.org/), [Nuclei](https://nuclei.projectdiscovery.io/), [Nikto](https://cirt.net/nikto), [testssl.sh](https://testssl.sh/)
+
+---
+
+© 2024 VulnCenter. Built for MSPs, by MSPs.

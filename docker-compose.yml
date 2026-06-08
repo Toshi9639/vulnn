@@ -104,7 +104,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NUCLEI_TEMPLATES_PATH: /opt/nuclei-templates
       MAX_CONCURRENT_SCANS: ${MAX_CONCURRENT_SCANS:-5}
-      SCAN_TIMEOUT_MS: ${SCAN_TIMEOUT_MS:-600000}
+      SCAN_TIMEOUT_MS: ${SCAN_TIMEOUT_MS:-1800000}
+      HEALTH_PORT: 8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,6 +124,12 @@ services:
     volumes:
       - vulncenter-nuclei-templates:/opt/nuclei-templates
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     # Workers can be scaled horizontally:
     # deploy:
     #   replicas: 3
@@ -148,9 +155,12 @@ services:
     logging: *default-logging
 
   # ─── Prisma Migration Runner (One-shot) ───────────────
+  # Run migrations manually before deploying: 
+  # docker compose --profile setup run --rm db-migrate
+  # Or let Coolify handle migrations via lifecycle hooks
   db-migrate:
     build:
-      context: ./db
+      context: ./api
       dockerfile: Dockerfile
     container_name: vulncenter-db-migrate
     environment:
@@ -160,9 +170,10 @@ services:
         condition: service_healthy
     networks:
       - vulncenter-internal
-    # This service runs migrations and exits
+    command: ["npx", "prisma", "migrate", "deploy"]
     profiles:
       - setup
+    restart: "no"
 
 # ─── Named Volumes ──────────────────────────────────────
 volumes:

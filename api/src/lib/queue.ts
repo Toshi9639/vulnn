@@ -85,6 +85,7 @@ export type ScanJobResult = {
     evidence?: string;
     remediation?: string;
     references?: string[];
+    metadata?: Record<string, unknown>;
   }>;
   errorMessage?: string;
   rawOutput?: string;

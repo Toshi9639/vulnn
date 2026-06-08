@@ -22,8 +22,10 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRY: z.string().default("24h"),
 
-  // CORS
-  CORS_ORIGIN: z.string().default("*"),
+  // CORS - require explicit origins in production
+  CORS_ORIGIN: env.NODE_ENV === "production" 
+    ? z.string().refine(s => s !== "*", "CORS_ORIGIN cannot be '*' in production")
+    : z.string().default("*"),
 
   // Rate Limiting
   RATE_LIMIT_MAX: z.coerce.number().default(100),

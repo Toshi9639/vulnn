@@ -25,6 +25,7 @@ export interface RawFinding {
   evidence?: string;
   remediation?: string;
   references?: string[];
+  metadata?: Record<string, unknown>;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -200,7 +201,7 @@ function portIsSensitive(portId: string): boolean {
 
 function readNmapJson(filePath: string): any {
   try {
-    const fs = await import("node:fs");
+    import fs from "node:fs";
     const content = fs.readFileSync(filePath, "utf-8");
     // Nmap JSON output has `nmaprun` as root key
     const parsed = JSON.parse(content);
@@ -276,7 +277,7 @@ async function runNucleiWeb(jobData: ScanJobData): Promise<ScanJobResult> {
 
 function parseNucleiOutput(outputFile: string, jobData: ScanJobData): RawFinding[] {
   try {
-    const fs = require("node:fs");
+    import fs from "node:fs";
     const content = fs.readFileSync(outputFile, "utf-8");
     if (!content) return [];
 
@@ -359,7 +360,7 @@ async function runNikto(jobData: ScanJobData): Promise<ScanJobResult> {
 
 function parseNiktoOutput(outputFile: string, jobData: ScanJobData): RawFinding[] {
   try {
-    const fs = require("node:fs");
+    import fs from "node:fs";
     const content = fs.readFileSync(outputFile, "utf-8");
     if (!content) return [];
 
@@ -435,7 +436,7 @@ async function runTestssl(jobData: ScanJobData): Promise<ScanJobResult> {
 
 function parseTestsslOutput(jsonFile: string, jobData: ScanJobData): RawFinding[] {
   try {
-    const fs = require("node:fs");
+    import fs from "node:fs";
     const content = fs.readFileSync(jsonFile, "utf-8");
     if (!content) return [];
 
@@ -487,8 +488,21 @@ function mapTestsslSeverity(severe: string): RawFinding["severity"] {
 // ════════════════════════════════════════════════════════════
 
 function determineTargetArg(jobData: ScanJobData): string {
-  // The value has already been validated/sanitized by the API
-  return jobData.targetValue;
+  // Re-validate target value in worker (defense in depth)
+  // The API should have already validated this, but we double-check here
+  const value = jobData.targetValue.trim();
+  
+  // Basic sanity checks
+  if (!value || value.length > 2048) {
+    throw new Error("Invalid target value: must be non-empty and under 2048 characters");
+  }
+  
+  // Reject shell metacharacters
+  if (/[;&|`$(){}[\\]!#~<>*\n\r]/.test(value)) {
+    throw new Error("Security: Target value contains invalid characters");
+  }
+  
+  return value;
 }
 
 function normalizeSeverity(severity?: string): RawFinding["severity"] {

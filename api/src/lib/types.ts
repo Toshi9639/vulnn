@@ -64,15 +64,18 @@ export function validateTarget(
       if (parts.some((p) => p > 255)) {
         return { valid: false, sanitized, error: "IP octet exceeds 255" };
       }
-      // Block private/reserved IPs from being scanned (unless overridden)
-      if (
-        parts[0] === 10 ||
-        (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) ||
-        (parts[0] === 192 && parts[1] === 168) ||
-        parts[0] === 127 ||
-        parts[0] === 0
-      ) {
-        return { valid: false, sanitized, error: "Private/reserved IP cannot be scanned" };
+      // Block private/reserved IPs from being scanned (unless ALLOW_PRIVATE_IPS is set)
+      const allowPrivateIps = process.env.ALLOW_PRIVATE_IPS === "true";
+      if (!allowPrivateIps) {
+        if (
+          parts[0] === 10 ||
+          (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) ||
+          (parts[0] === 192 && parts[1] === 168) ||
+          parts[0] === 127 ||
+          parts[0] === 0
+        ) {
+          return { valid: false, sanitized, error: "Private/reserved IP cannot be scanned. Set ALLOW_PRIVATE_IPS=true to override." };
+        }
       }
       return { valid: true, sanitized };
     }

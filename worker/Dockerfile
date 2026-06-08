@@ -62,7 +62,8 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 # ─── Install Nuclei (ProjectDiscovery) ──────────────────────
-RUN curl -fsSL https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_3.3.x_linux_amd64.tar.gz \
+RUN TARGETARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/') && \
+    curl -fsSL https://github.com/projectdiscovery/nuclei/releases/latest/download/nuclei_3.3.x_linux_${TARGETARCH}.tar.gz \
     | tar xz -C /usr/local/bin/ nuclei \
     && chmod +x /usr/local/bin/nuclei \
     && nuclei -version

@@ -1,20 +1,71 @@
 // ──────────────────────────────────────────────────────────────
-// VulnCenter API/Worker — Health Check Utility
+// VulnCenter API — Health Check Server
+// Persistent HTTP server for Docker health checks
 // ──────────────────────────────────────────────────────────────
 
-// Simple health probe for Docker healthchecks.
-// Exits with 0 if process is alive, 1 if not.
-
 import http from "node:http";
+import { prisma } from "./database.js";
+import { redis } from "./queue.js";
+import { logger } from "./logger.js";
 
-const port = parseInt(process.env.HEALTH_PORT ?? "8080", 10);
+const PORT = parseInt(process.env.HEALTH_PORT ?? "8080", 10);
+const HOST = "0.0.0.0";
 
-const server = http.createServer((_req, res) => {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ status: "healthy", timestamp: new Date().toISOString() }));
+const server = http.createServer(async (_req, res) => {
+  try {
+    // Check database
+    const dbStatus = await prisma
+      .$queryRaw`SELECT 1 AS ok`
+      .then(() => "healthy" as const)
+      .catch(() => "unhealthy" as const);
+
+    // Check Redis
+    const redisStatus = redis.status === "ready" ? "healthy" : "unhealthy";
+
+    const isHealthy = dbStatus === "healthy" && redisStatus === "healthy";
+    const statusCode = isHealthy ? 200 : 503;
+
+    res.writeHead(statusCode, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: isHealthy ? "healthy" : "degraded",
+        timestamp: new Date().toISOString(),
+        services: {
+          database: dbStatus,
+          redis: redisStatus,
+        },
+      })
+    );
+  } catch (error) {
+    logger.error({ error }, "Health check failed");
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: "unhealthy",
+        timestamp: new Date().toISOString(),
+        error: "Health check failed",
+      })
+    );
+  }
 });
 
-server.listen(port, "0.0.0.0", () => {
-  console.log(`Health check server listening on port ${port}`);
-  process.exit(0); // Exit immediately — Docker just checks if the port opens
+server.listen(PORT, HOST, () => {
+  logger.info(`Health check server listening on ${HOST}:${PORT}`);
+});
+
+// Handle shutdown gracefully
+process.on("SIGTERM", () => {
+  logger.info("Health check server received SIGTERM, shutting down");
+  server.close(() => {
+    logger.info("Health check server closed");
+    process.exit(0);
+  });
+});
+
+process.on("SIGINT", () => {
+  logger.info("Health check server received SIGINT, shutting down");
+  server.close(() => {
+    logger.info("Health check server closed");
+    process.exit(0);
+  });
 });

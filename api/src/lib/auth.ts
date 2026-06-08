@@ -33,6 +33,11 @@ import fjwt from "@fastify/jwt";
 import type { FastifyReply } from "./types.js";
 
 export const authPlugin = fp(async (fastify: FastifyInstance) => {
+  Validate CORS_ORIGIN in production
+  if (process.env.NODE_ENV === "production" && process.env.CORS_ORIGIN === "*") {
+    throw new Error("CORS_ORIGIN cannot be '*' in production. Set explicit origins.");
+  }
+
   // Register JWT
   await fastify.register(fjwt, {
     secret: env.JWT_SECRET,

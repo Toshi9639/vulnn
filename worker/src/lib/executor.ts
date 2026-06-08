@@ -12,7 +12,7 @@ import { logger } from "./logger.js";
 
 export const WORKER_CONFIG = {
   maxConcurrentScans: parseInt(process.env.MAX_CONCURRENT_SCANS ?? "5", 10),
-  scanTimeoutMs: parseInt(process.env.SCAN_TIMEOUT_MS ?? "600000", 10), // 10 min default
+  scanTimeoutMs: parseInt(process.env.SCAN_TIMEOUT_MS ?? "1800000", 10), // 30 min default
   nucleiTemplatesPath: process.env.NUCLEI_TEMPLATES_PATH ?? "/opt/nuclei-templates",
   tempDir: path.join(os.tmpdir(), "vulncenter-scans"),
 };
@@ -156,8 +156,9 @@ export function safeRemoveFile(filePath: string): void {
   try {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+      logger.debug({ filePath }, "Temp file cleaned up");
     }
-  } catch {
-    // Best effort cleanup
+  } catch (error) {
+    logger.warn({ filePath, error }, "Failed to remove temp file");
   }
 }
