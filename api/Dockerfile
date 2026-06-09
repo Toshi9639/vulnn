@@ -15,8 +15,8 @@ COPY package*.json ./
 COPY tsconfig.json ./
 COPY prisma/ ./prisma/
 
-# Install dependencies (use install instead of ci to avoid package-lock.json requirement)
-RUN npm install --production --no-audit --no-fund
+# Install all dependencies (need dev for Prisma generation)
+RUN npm install --no-audit --no-fund
 
 # Generate Prisma client
 RUN npx prisma generate

@@ -15,7 +15,7 @@ COPY tailwind.config.ts ./
 COPY postcss.config.js ./
 COPY components.json ./
 
-RUN npm install --production --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 
 COPY . .
 
