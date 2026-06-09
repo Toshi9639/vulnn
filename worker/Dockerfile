@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production --frozen-lockfile
+RUN npm install --production --no-audit --no-fund
 
 # Copy source code
 COPY src/ ./src/
